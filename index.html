@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Museum Object Record Comparator</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    body {
+      background-color: #fafafa;
+      font-family: 'Inter', sans-serif;
+      margin: 1.5rem;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 1rem;
+      font-weight: 600;
+    }
+    .dual-panel {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+    }
+    .panel {
+      flex: 1 1 45%;
+      background: #fff;
+      border-radius: 10px;
+      padding: 1.2rem;
+      box-shadow: 0 0 8px rgba(0,0,0,0.05);
+      min-width: 280px;
+    }
+    .panel h5, .panel h6 {
+      border-bottom: 2px solid #007bff33;
+      padding-bottom: .5rem;
+      margin-bottom: 1rem;
+      font-weight: 600;
+    }
+    .accordion-button {
+      font-weight: 600;
+    }
+    .field-row {
+      border-bottom: 1px dashed #eee;
+      padding: .25rem 0;
+      font-size: .95rem;
+      display: flex;
+      justify-content: space-between;
+    }
+    .field-row strong {
+      width: 40%;
+      color: #333;
+      word-break: break-word;
+    }
+    .schema-field-row {
+      border-bottom: 1px dashed #ddd;
+      padding: 0.35rem 0;
+      font-size: 0.92rem;
+      display: flex;
+      justify-content: space-between;
+    }
+    .schema-field-row strong {
+      width: 40%;
+      color: #222;
+    }
+    /* New styles for the count table */
+    .count-table {
+      width: 100%;
+      font-size: 0.85rem;
+    }
+    .count-table tr {
+      border-bottom: 1px solid #eee;
+    }
+    .count-table td {
+      padding: 4px 8px;
+    }
+    .count-badge {
+      background-color: #e9ecef;
+      color: #495057;
+      font-weight: bold;
+      border-radius: 12px;
+      padding: 2px 8px;
+      font-size: 0.75rem;
+    }
+    
+    #spiderChartContainer,
+    #schemaSpiderPresenceContainer,
+    #schemaSpiderQuantityContainer {
+      width: 100%;
+      max-width: 600px;
+      height: 400px;
+      margin: 1rem auto;
+      text-align: center;
+      position: relative;
+    }
+    canvas {
+      width: 100% !important;
+      height: 100% !important;
+    }
+    /* Lightbox full-screen image */
+    #imgOverlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.92);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 99999;
+    }
+    #imgOverlay img {
+      max-width: 90%;
+      max-height: 90%;
+      border-radius: 10px;
+      box-shadow: 0 0 15px rgba(255,255,255,0.3);
+    }
+    footer {
+      text-align: center;
+      font-size: .9rem;
+      margin-top: 2rem;
+      color: #777;
+    }
+    @media (max-width: 768px) {
+      .dual-panel { flex-direction: column; }
+      .panel { flex: 1 1 100%; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>🧭 Museum Object Record Comparator</h1>
+    <p class="text-center text-muted mb-3">
+      Compare entries between your <b>Textile Machinery catalogue (1921)</b> and the <b>Science Museum Group Collections Online</b>.
+    </p>
+
+    <div class="mb-3 d-flex justify-content-center">
+      <input type="text" id="globalSearch" class="form-control w-50" placeholder="🔍 Search all records...">
+    </div>
+
+    <div class="table-responsive">
+      <table id="recordsTable" class="table table-striped table-hover" style="width:100%">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <footer>Built on the third-floor.</footer>
+  </div>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+  <script>
+  // Helper to parse potential Python list strings or JSON
+  function parseValue(val) {
+      if (!val) return null;
+      val = val.trim();
+      // Try standard JSON
+      try { return JSON.parse(val); } catch(e) {}
+      // Try Python-style list/dict (swap single quotes to double)
+      try { 
+          // Basic swap for simple structures
+          let fixed = val.replace(/'/g, '"').replace(/\bNone\b/g, 'null').replace(/\bFalse\b/g, 'false').replace(/\bTrue\b/g, 'true');
+          return JSON.parse(fixed); 
+      } catch(e) {}
+      return val; // Return original string if parse fails
+  }
+
+  // Helper to count items in a value
+  function countValue(val) {
+      if (!val) return 0;
+      if (typeof val === 'string') {
+          val = val.trim();
+          if (val === '' || val.toLowerCase() === 'nan') return 0;
+      }
+      
+      const parsed = parseValue(val);
+      
+      if (Array.isArray(parsed)) {
+          return parsed.length;
+      }
+      if (typeof parsed === 'object' && parsed !== null) {
+          // If it's a single object (dictionary), count as 1 entity
+          return 1; 
+      }
+      // It is a primitive string/number
+      return 1;
+  }
+
+  document.addEventListener('DOMContentLoaded', async function() {
+      console.log("📂 Loading datasets...");
+
+      let [recordsData, comparisonData, schemaData] = await Promise.all([
+        new Promise(res => Papa.parse('matched_records.csv', { download:true, header:true, complete:r=>res(r.data) })),
+        new Promise(res => Papa.parse('entity_comparison_results.csv', { download:true, header:true, complete:r=>res(r.data) })),
+        // UPDATED FILENAME HERE
+        new Promise(res => Papa.parse('1921_textile_machinery_schema_extraction.csv', { download:true, header:true, complete:r=>res(r.data) }))
+      ]);
+
+      recordsData = recordsData.filter(d => Object.keys(d).length > 1);
+      comparisonData = comparisonData.filter(d => Object.keys(d).length > 1);
+      schemaData = schemaData.filter(d => Object.keys(d).length > 1);
+
+      /* ---------- DataTable Setup ---------- */
+      const visibleColumns = [
+        "Catalogue number", "Object name", "Object/Inventory number",
+        "uid", "identifier", "title"
+      ];
+      // Fallback if columns differ
+      const columns = Object.keys(recordsData[0] || {})
+        .filter(k => visibleColumns.includes(k))
+        .map(k => ({ title:k, data:k }));
+
+      const table = $('#recordsTable').DataTable({
+        data: recordsData,
+        columns: columns,
+        pageLength: 25,
+        responsive: true
+      });
+
+      $('#globalSearch').on('keyup', function() {
+        table.search(this.value).draw();
+      });
+
+      /* ---------- Field Lists ---------- */
+      const gsFields = ["Filename","Catalogue number","Object name","Maker/Donor",
+                        "Date of creation","Object entry information","Object/Inventory number"];
+
+      const smgFields = ["uid","identifier","title","description","category",
+                         "material","object_name","date","place","maker","image"];
+
+      const entityMetrics = [
+        "ObjectNames","Makers","Organisations/institutions",
+        "Dates","Places","Descriptions","Other"
+      ];
+
+      // UPDATED SCHEMA GROUPS including 'location'
+      const schemaGroups = {
+        "Identification": [
+          "object_number","secondary_identifier","whole_or_part",
+          "item_count","collection","legal_status","location"
+        ],
+        "Object & Description": [
+          "object_name","description","materials","hazards","measurements"
+        ],
+        "Place & Date": [
+          "place_made","date_made"
+        ],
+        "People": [
+          "makers_and_associated_people"
+        ],
+        "Interpretation": [
+          "interpretation","interpretation_source","interpretation_date"
+        ]
+      };
+
+      let activeChart = null;
+      let presenceChart = null;
+      let quantityChart = null;
+
+      /* ---------- Row click (modal) ---------- */
+      $('#recordsTable tbody').on('click', 'tr', function() {
+        const rowData = table.row(this).data();
+        const idx = table.row(this).index();
+
+        const comp = comparisonData.find(r => Number(r.RowIndex) === idx);
+        const schema = schemaData.find(r => Number(r.RowIndex) === idx);
+
+        /* ---------- Build Panels ---------- */
+
+        let leftHTML = `<div class="panel"><h5>📘 Textile Machinery 1921</h5>`;
+        gsFields.forEach(k => {
+          if (k in rowData)
+            leftHTML += `<div class="field-row"><strong>${k}</strong><span>${rowData[k]||""}</span></div>`;
+        });
+        leftHTML += `</div>`;
+
+        let rightHTML = `<div class="panel"><h5>🏛️ Science Museum Group</h5>`;
+        smgFields.forEach(k => {
+          if (!(k in rowData)) return;
+          let v = rowData[k] || "";
+          if (k==="uid" && v) v = `<a href="https://collection.sciencemuseumgroup.org.uk/objects/${v}" target="_blank">${v}</a>`;
+          if (k==="image" && v) v = `<a href="${v}" target="_blank">View image 🔗</a>`;
+          rightHTML += `<div class="field-row"><strong>${k}</strong><span>${v}</span></div>`;
+        });
+        rightHTML += `</div>`;
+
+        /* ---------- Build Schema Content (Counts + Accordions) ---------- */
+        
+        // 1. Build Counts List
+        let countsListHTML = `<table class="count-table">`;
+        let allFields = [];
+        
+        for (const [group, fields] of Object.entries(schemaGroups)) {
+            fields.forEach(f => {
+                allFields.push(f);
+                let val = schema ? schema[f] : null;
+                let count = countValue(val);
+                // Only simple name for display
+                let displayName = f.replace(/_/g, ' '); 
+                displayName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
+                
+                countsListHTML += `
+                    <tr>
+                        <td>${displayName}</td>
+                        <td class="text-end"><span class="count-badge">${count}</span></td>
+                    </tr>
+                `;
+            });
+        }
+        countsListHTML += `</table>`;
+
+
+        // 2. Build Accordions
+        let accordionHTML = ``;
+        let groupIndex = 0;
+
+        for (const [group, fields] of Object.entries(schemaGroups)) {
+          groupIndex++;
+          const accId = `schemaAcc_${groupIndex}`;
+
+          accordionHTML += `
+            <div class="accordion mb-3" id="accordion_${accId}">
+              <div class="accordion-item">
+                <h2 class="accordion-header" id="h_${accId}">
+                  <button class="accordion-button collapsed" type="button"
+                          data-bs-toggle="collapse" data-bs-target="#${accId}">
+                    ${group}
+                  </button>
+                </h2>
+
+                <div id="${accId}" class="accordion-collapse collapse">
+                  <div class="accordion-body">
+          `;
+
+          if (!schema) {
+            accordionHTML += `<p class="text-muted fst-italic">No schema data available.</p>`;
+          } else {
+            fields.forEach(f => {
+              let val = schema[f] || "";
+              // Formatting logic from original script
+              if (typeof val === "string" && (val.startsWith("[")||val.startsWith("{"))) {
+                try { val = JSON.stringify(JSON.parse(val), null, 2); } catch {}
+                // Fallback formatting for python lists if JSON parse failed
+                if (val.startsWith("[") && val.includes("'")) {
+                     try {
+                         // Try to make it look like JSON for display
+                         let fixed = val.replace(/'/g, '"');
+                         val = JSON.stringify(JSON.parse(fixed), null, 2);
+                     } catch {}
+                }
+              }
+              
+              accordionHTML += `
+                <div class="schema-field-row">
+                  <strong>${f}</strong>
+                  <span style="white-space:pre-wrap;">${val}</span>
+                </div>
+              `;
+            });
+          }
+
+          accordionHTML += `
+                  </div>
+                </div>
+              </div>
+            </div>
+          `;
+        }
+
+        // Combine into Panel
+        let schemaPanelHTML = `
+          <div class="panel mt-4">
+            <h5>📑 Extracted Schema Fields (AI-Enhanced)</h5>
+            <div class="row">
+                <div class="col-lg-4 border-end">
+                    <h6 class="text-muted small text-uppercase mb-3">Entity Counts</h6>
+                    ${countsListHTML}
+                </div>
+                <div class="col-lg-8">
+                     ${accordionHTML}
+                </div>
+            </div>
+          </div>
+        `;
+
+
+        /* ---------- Schema charts ---------- */
+        const schemaChartHTML = `
+          <div class="panel mt-4">
+            <h5 class="text-center">📊 Schema Entity Analysis</h5>
+
+            <div id="schemaSpiderPresenceContainer">
+              <canvas id="schemaSpiderPresence"></canvas>
+              <button id="downloadPresenceChart" class="btn btn-outline-secondary btn-sm mt-2">
+                ⬇️ Download Presence Chart
+              </button>
+            </div>
+
+            <div id="schemaSpiderQuantityContainer" class="mt-4">
+              <canvas id="schemaSpiderQuantity"></canvas>
+              <button id="downloadQuantityChart" class="btn btn-outline-secondary btn-sm mt-2">
+                ⬇️ Download Quantity Chart
+              </button>
+            </div>
+          </div>
+        `;
+
+        /* ---------- Modal ---------- */
+        const modalHTML = `
+          <div class="modal fade" id="compareModal" tabindex="-1">
+            <div class="modal-dialog modal-xl modal-dialog-scrollable">
+              <div class="modal-content">
+
+                <div class="modal-header">
+                  <h5 class="modal-title">🔎 Compare Record</h5>
+                  <button class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+
+                <div class="modal-body text-center">
+
+                  <div id="spiderChartContainer">
+                    <canvas id="spiderChart"></canvas>
+                    <button id="downloadChart" class="btn btn-outline-secondary btn-sm mt-2">
+                      ⬇️ Download Comparison Chart
+                    </button>
+                  </div>
+
+                  <div class="dual-panel">${leftHTML + rightHTML}</div>
+                  
+                  <div class="dual-panel mt-3">
+
+                    <div class="panel">
+                      <h6>🌿 Unique to Textile Machinery</h6>
+                      ${(() => {
+                        if (!comp?.Unique_to_Meteorology) return "<p class='text-muted'>None</p>";
+                          let html = "";
+                          try {
+                          const uniq = JSON.parse(comp.Unique_to_Meteorology);
+                          for (const [cat, list] of Object.entries(uniq)) {
+                            if (list?.length) html += `<div><strong>${cat}:</strong> ${list.join(", ")}</div>`;
+                          }
+                        } catch {}
+                        return html || "<p class='text-muted'>None</p>";
+                      })()}
+                    </div>
+
+                    <div class="panel">
+                      <h6>🏺 Unique to Science Museum Group</h6>
+                      ${(() => {
+                        if (!comp?.Unique_to_SMG) return "<p class='text-muted'>None</p>";
+                        let html = "";
+                        try {
+                          const uniq = JSON.parse(comp.Unique_to_SMG);
+                          for (const [cat, list] of Object.entries(uniq)) {
+                            if (list?.length) html += `<div><strong>${cat}:</strong> ${list.join(", ")}</div>`;
+                          }
+                        } catch {}
+                        return html || "<p class='text-muted'>None</p>";
+                      })()}
+                    </div>
+
+                  </div>
+
+                  ${schemaPanelHTML}
+
+                  ${schemaChartHTML}
+
+                  <div class="mt-4">
+                    <h6>🖼️ Related Image</h6>
+                    <img id="recordImage"
+                         src="pages/${rowData["Filename"]}"
+                         class="img-fluid rounded shadow-sm"
+                         style="max-height:420px; cursor:pointer;">
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+
+        $('#compareModal').remove();
+        document.body.insertAdjacentHTML("beforeend", modalHTML);
+        new bootstrap.Modal(document.getElementById('compareModal')).show();
+
+        /* ---------- Image fullscreen viewer ---------- */
+        const allFiles = recordsData.map(r => r["Filename"]).filter(f => f);
+        let currentIndex = allFiles.indexOf(rowData["Filename"]);
+
+        document.getElementById("recordImage").onclick = () => {
+
+          const overlay = document.createElement("div");
+          overlay.id = "imgOverlay";
+
+          overlay.innerHTML = `
+            <img id="overlayImg" src="pages/${allFiles[currentIndex]}">
+            <button id="prevImg" class="btn btn-light position-absolute top-50 start-0 translate-middle-y ms-3">⟨</button>
+            <button id="nextImg" class="btn btn-light position-absolute top-50 end-0 translate-middle-y me-3">⟩</button>
+          `;
+
+          document.body.appendChild(overlay);
+
+          const updateImg = () => {
+            document.getElementById("overlayImg").src = "pages/" + allFiles[currentIndex];
+          };
+
+          document.getElementById("prevImg").onclick = (e) => {
+            e.stopPropagation();
+            currentIndex = (currentIndex - 1 + allFiles.length) % allFiles.length;
+            updateImg();
+          };
+
+          document.getElementById("nextImg").onclick = (e) => {
+            e.stopPropagation();
+            currentIndex = (currentIndex + 1) % allFiles.length;
+            updateImg();
+          };
+
+          overlay.onclick = (e) => {
+            if (e.target.id === "imgOverlay") overlay.remove();
+          };
+
+          document.addEventListener("keydown", function escListener(e) {
+            if (!document.body.contains(overlay)) {
+              document.removeEventListener("keydown", escListener);
+              return;
+            }
+            if (e.key === "Escape") overlay.remove();
+            if (e.key === "ArrowLeft") document.getElementById("prevImg").click();
+            if (e.key === "ArrowRight") document.getElementById("nextImg").click();
+          });
+        };
+
+
+        /* ---------- Comparison spider chart ---------- */
+        if (comp) {
+          const ctx = document.getElementById('spiderChart');
+
+          const mVals = entityMetrics.map(m => Number(comp[`Meteorology_${m}`] || 0));
+          const sVals = entityMetrics.map(m => Number(comp[`SMG_${m}`] || 0));
+          const maxVal = Math.max(...mVals, ...sVals, 1);
+
+          activeChart = new Chart(ctx, {
+            type: 'radar',
+            data: {
+              labels: entityMetrics,
+              datasets: [
+                {
+                  label: "Textile Machinery 1921",
+                  data: mVals,
+                  backgroundColor: "rgba(54,162,235,0.2)",
+                  borderColor: "rgba(54,162,235,1)",
+                  borderWidth: 2
+                },
+                {
+                  label: "Science Museum Group",
+                  data: sVals,
+                  backgroundColor: "rgba(255,99,132,0.2)",
+                  borderColor: "rgba(255,99,132,1)",
+                  borderWidth: 2
+                }
+              ]
+            },
+            options: {
+              scales: { r: { beginAtZero:true, max:maxVal+1 } }
+            }
+          });
+
+          document.getElementById("downloadChart").onclick = () => {
+            const a = document.createElement("a");
+            a.download = "comparison_chart.png";
+            a.href = activeChart.toBase64Image();
+            a.click();
+          };
+        }
+
+        /* ---------- Schema spider charts ---------- */
+        if (schema) {
+          const presenceValues = Object.values(schemaGroups)
+            .flat()
+            .map(f => {
+                const val = schema[f];
+                return (val && val !== "" && String(val).toLowerCase() !== "nan") ? 1 : 0;
+            });
+
+          const quantityValues = Object.values(schemaGroups)
+            .flat()
+            .map(f => countValue(schema[f]));
+
+          const allSchemaFields = Object.values(schemaGroups).flat();
+          const maxQ = Math.max(...quantityValues, 1);
+
+          presenceChart = new Chart(document.getElementById("schemaSpiderPresence"), {
+            type: "radar",
+            data: {
+              labels: allSchemaFields,
+              datasets: [{
+                label: "Presence (1 = present)",
+                data: presenceValues,
+                backgroundColor: "rgba(46,204,113,0.25)",
+                borderColor: "rgba(46,204,113,1)",
+                borderWidth: 2
+              }]
+            },
+            options: { scales:{r:{beginAtZero:true,max:1}} }
+          });
+
+          quantityChart = new Chart(document.getElementById("schemaSpiderQuantity"), {
+            type: "radar",
+            data: {
+              labels: allSchemaFields,
+              datasets: [{
+                label: "Quantity (number of values)",
+                data: quantityValues,
+                backgroundColor: "rgba(155,89,182,0.25)",
+                borderColor: "rgba(155,89,182,1)",
+                borderWidth: 2
+              }]
+            },
+            options: { scales:{r:{beginAtZero:true,max:maxQ+1}} }
+          });
+
+          document.getElementById("downloadPresenceChart").onclick = () => {
+            const a = document.createElement("a");
+            a.download = "schema_presence_chart.png";
+            a.href = presenceChart.toBase64Image();
+            a.click();
+          };
+
+          document.getElementById("downloadQuantityChart").onclick = () => {
+            const a = document.createElement("a");
+            a.download = "schema_quantity_chart.png";
+            a.href = quantityChart.toBase64Image();
+            a.click();
+          };
+        }
+
+      }); // end ROW CLICK
+  }); // end DOMLoaded
+  </script>
+</body>
+</html>
