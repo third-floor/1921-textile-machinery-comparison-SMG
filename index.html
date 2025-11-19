@@ -264,7 +264,7 @@
       let quantityChart = null;
 
       /* ---------- Row click (modal) ---------- */
-      $('#recordsTable tbody').on('click', 'tr', function() {
+      $('#recordsTable tbody').on('click', 'tr', async function() {
         const rowData = table.row(this).data();
         const idx = table.row(this).index();
 
