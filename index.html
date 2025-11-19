@@ -199,7 +199,6 @@
       let [recordsData, comparisonData, schemaData] = await Promise.all([
         new Promise(res => Papa.parse('matched_records.csv', { download:true, header:true, complete:r=>res(r.data) })),
         new Promise(res => Papa.parse('entity_comparison_results.csv', { download:true, header:true, complete:r=>res(r.data) })),
-        // UPDATED FILENAME HERE
         new Promise(res => Papa.parse('1921_textile_machinery_schema_extraction.csv', { download:true, header:true, complete:r=>res(r.data) }))
       ]);
 
@@ -491,18 +490,22 @@
         new bootstrap.Modal(document.getElementById('compareModal')).show();
 
         /* ---------- Image fullscreen viewer ---------- */
-        // Extract filenames and sort them naturally by their numeric seq_XX value
-        const allFiles = recordsData
-          .map(r => r["Filename"])
-          .filter(f => f)
-          .sort((a, b) => {
-              const getSeq = (name) => {
-                  const match = name.match(/seq_(\d+)/);
-                  return match ? Number(match[1]) : 0;
-              };
-              return getSeq(a) - getSeq(b);
+        let allFiles = [];
+        try {
+          const resp = await fetch("pages/index.json");
+          const json = await resp.json();
+          allFiles = json.files.sort((a, b) => {
+            const A = parseInt(a.match(/seq_(\d+)/)?.[1] || 0);
+            const B = parseInt(b.match(/seq_(\d+)/)?.[1] || 0);
+            return A - B;
           });
+        } catch (err) {
+          console.error("Failed to load pages/index.json", err);
+        }
+
+        /* starting image comes from CSV */
         let currentIndex = allFiles.indexOf(rowData["Filename"]);
+        if (currentIndex === -1) currentIndex = 0;
 
         document.getElementById("recordImage").onclick = () => {
 
