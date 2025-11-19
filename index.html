@@ -491,7 +491,17 @@
         new bootstrap.Modal(document.getElementById('compareModal')).show();
 
         /* ---------- Image fullscreen viewer ---------- */
-        const allFiles = recordsData.map(r => r["Filename"]).filter(f => f);
+        // Extract filenames and sort them naturally by their numeric seq_XX value
+        const allFiles = recordsData
+          .map(r => r["Filename"])
+          .filter(f => f)
+          .sort((a, b) => {
+              const getSeq = (name) => {
+                  const match = name.match(/seq_(\d+)/);
+                  return match ? Number(match[1]) : 0;
+              };
+              return getSeq(a) - getSeq(b);
+          });
         let currentIndex = allFiles.indexOf(rowData["Filename"]);
 
         document.getElementById("recordImage").onclick = () => {
